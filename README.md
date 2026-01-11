@@ -61,7 +61,7 @@ Here is how Owngoal serves two distinct users watching the **exact same minute**
         "User2_View": "5CAM"
     }
 ]
-
+```
 ## 🏗️ Architecture & Tech Stack
 
 *   **Video Understanding**: TwelveLabs Marengo (Visual semantics & embeddings)
