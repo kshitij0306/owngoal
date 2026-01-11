@@ -82,7 +82,7 @@ owngoal/
 ├── processed_video_clips/    # Output directory for personalized clips
 ├── testvid/                  # Test assets
 └── .gitignore
-
+```
 ## 🧗 Challenges & Solutions
 
 **Challenge 1: Low-Res Multi-View Footage**
