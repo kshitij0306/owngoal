@@ -1,0 +1,9 @@
+
+{
+  "name": "Own Goal",
+  "description": "Enterprise-grade sports broadcast director with per-user segmented camera switching.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
