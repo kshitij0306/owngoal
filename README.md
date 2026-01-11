@@ -66,8 +66,8 @@ Here is how Owngoal serves two distinct users watching the **exact same minute**
 
 *   **Video Understanding**: TwelveLabs Marengo (Visual semantics & embeddings)
 *   **User Reasoning**: Google Gemini (Generating User Embeddings)
-*   **Decision Engine**: Python (Cosine Similarity calculations)
-*   **Backend**: TypeScript (Node.js)
+*   **Decision Engine**: Python (`cos_sim_folder.py`)
+*   **Backend/AI**: Python (Flash/Gemini Integration)
 *   **Frontend**: TypeScript (React)
 *   **Video Processing**: FFmpeg
 
@@ -75,9 +75,8 @@ Here is how Owngoal serves two distinct users watching the **exact same minute**
 
 ```bash
 owngoal/
-├── backend/                  # Server-side application (TypeScript)
+├── backend/                  # Python AI Pipeline (Gemini, TwelveLabs, Recommendation Logic)
 ├── frontend/                 # Client-side interface (TypeScript/React)
-├── video_processing_scripts/ # Python scripts for AI analysis and cutting
 ├── raw_footage/              # Input directory for raw game videos
 ├── processed_video_clips/    # Output directory for personalized clips
 ├── testvid/                  # Test assets
@@ -103,26 +102,58 @@ Marengo typically requires high-resolution inputs to generate accurate embedding
 *   Node.js (v18+)
 *   Python (v3.9+)
 *   FFmpeg
-*   API Keys: TwelveLabs, Google Gemini
+*   API Keys: TwelveLabs, Google Gemini (Add to `.env` in backend)
 
-### 1. Setup Backend
-```bash
-cd backend
-npm install
-npm run dev
-```
+### 1. Setup Backend (AI Director Engine)
+The backend logic is written in Python.
 
-### 2. Setup Frontend
-Navigate to the scripts folder to process raw footage.
-```bash
-cd video_processing_scripts
+1.  Navigate to the backend directory:
+    ```bash
+    cd backend
+    ```
 
-# Install dependencies
-pip install -r requirements.txt
+2.  Create a `.env` file in this folder and add your API keys:
+    ```env
+    TWELVE_LABS_API_KEY=your_key_here
+    GEMINI_API_KEY=your_key_here
+    ```
 
-# Run the embedding and selection script
-python main.py
-```
+3.  Create a virtual environment (optional but recommended) and install dependencies:
+    ```bash
+    python -m venv venv
+    source venv/bin/activate  # On Windows: venv\Scripts\activate
+    
+    pip install -r requirements.txt
+    ```
+
+4.  Run the Persona Generator and Recommendation scripts:
+    ```bash
+    # Step A: Generate User Persona Embeddings using Gemini
+    python gemini_persona_generator.py
+
+    # Step B: Embed Video Segments & Run Recommendation Logic
+    python recommend_clips.py
+    ```
+
+### 2. Setup Frontend (User Interface)
+The frontend is built with TypeScript and React.
+
+1.  Open a new terminal and navigate to the frontend directory:
+    ```bash
+    cd frontend
+    ```
+
+2.  Install dependencies:
+    ```bash
+    npm install
+    ```
+
+3.  Start the development server:
+    ```bash
+    npm run dev
+    # The app should be running at http://localhost:3000 (or similar)
+    ```
+
 ## 🔮 What's Next?
 
 *   **Organic Persona Learning:** Instead of asking users what they like, we will track when they increase volume or look away (distracted) to update their embedding vector automatically.
