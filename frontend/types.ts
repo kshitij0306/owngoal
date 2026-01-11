@@ -11,6 +11,15 @@ export interface User {
   name: string;
 }
 
+export interface StreamEvent {
+  id: string;
+  title: string;
+  thumbnail: string;
+  date: string;
+  status: 'LIVE' | 'ARCHIVE';
+  availableCams: string[];
+}
+
 export interface SegmentDecision {
   user_id: string;
   seg: number;
@@ -26,15 +35,33 @@ export interface PlaybackState {
   videoId: string;
 }
 
+export type MediaSegment = File | string;
+
+export interface MediaLibrary {
+  [sessionId: string]: {
+    cams: {
+      [camName: string]: {
+        segments: { [segId: number]: MediaSegment }
+      }
+    }
+  }
+}
+
+/**
+ * Represents a video source configuration for a specific camera angle.
+ */
+export interface VideoSource {
+  id: string;
+  label: string;
+  url: string;
+}
+
+/**
+ * Represents a transition decision made by the AI director.
+ */
 export interface DirectorDecision {
   timestamp: number;
   angle: CameraAngle;
   transitionType: 'CUT' | 'FADE';
   reason?: string;
-}
-
-export interface VideoSource {
-  id: string;
-  label: string;
-  url: string;
 }

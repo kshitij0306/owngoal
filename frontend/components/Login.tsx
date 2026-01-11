@@ -11,9 +11,12 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (userId.trim()) {
-      onLogin({ id: userId, name: userId });
+    const trimmed = userId.trim();
+    if (trimmed) {
+      onLogin({ id: trimmed, name: trimmed });
+      return;
     }
+    onLogin({ id: '', name: 'COMPARE' });
   };
 
   return (
@@ -39,6 +42,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
               placeholder="e.g. USER_089"
               autoFocus
             />
+            <p className="mt-2 text-[9px] text-gray-600 uppercase tracking-widest">Leave blank for dual-view compare</p>
           </div>
           
           <button 

@@ -1,217 +1,457 @@
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { User, SegmentDecision, PlaybackState } from './types';
-import { VIDEO_ID, INITIAL_CAM, CAM_LIST, SEGMENT_DURATION_MS } from './constants';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { User, SegmentDecision, PlaybackState, StreamEvent, MediaLibrary } from './types';
+import { INITIAL_CAM } from './constants';
 import Login from './components/Login';
+import EventSelection from './components/EventSelection';
 import SegmentPlayer from './components/SegmentPlayer';
+
+type CameraDecision = {
+  VideoID: string;
+  User: string;
+  Timestamp: string;
+  Camera: string;
+};
+
+type NormalizedDecision = {
+  timeSec: number;
+  cam: string;
+  label: string;
+};
+
+const parseTimestampToSeconds = (value: string): number => {
+  const [mins, secs] = value.split(':').map(part => Number(part));
+  if (!Number.isFinite(mins) || !Number.isFinite(secs)) return NaN;
+  return mins * 60 + secs;
+};
+
+const normalizeCameraName = (value: string): string => {
+  const cleaned = value.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (cleaned.startsWith('cam')) return cleaned;
+
+  const mapping: Record<string, string> = {
+    '2cam': 'cam2',
+    '4cam': 'cam4',
+    '5cam': 'cam5',
+    '11cam': 'cam11',
+    'brep': 'brep',
+    'arep': 'arep'
+  };
+
+  return mapping[cleaned] ?? value.toLowerCase();
+};
+
+const COMPARE_USERS = ['User1', 'User2'] as const;
+type CompareUser = typeof COMPARE_USERS[number];
+
+const formatTime = (value: number): string => {
+  const safe = Math.max(0, Math.floor(value));
+  const mins = Math.floor(safe / 60);
+  const secs = safe % 60;
+  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+};
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [selectedEvent, setSelectedEvent] = useState<StreamEvent | null>(null);
+  const [mediaLibrary, setMediaLibrary] = useState<MediaLibrary | null>(null);
   const [playback, setPlayback] = useState<PlaybackState>({
     currentSegment: 1,
     currentCam: INITIAL_CAM,
     isBuffering: false,
     isPaused: false,
-    videoId: VIDEO_ID
+    videoId: ''
+  });
+
+  const isCompareMode = currentUser?.id.trim() === '';
+  const [comparePlayback, setComparePlayback] = useState<Record<CompareUser, PlaybackState>>({
+    User1: {
+      currentSegment: 1,
+      currentCam: INITIAL_CAM,
+      isBuffering: false,
+      isPaused: false,
+      videoId: ''
+    },
+    User2: {
+      currentSegment: 1,
+      currentCam: INITIAL_CAM,
+      isBuffering: false,
+      isPaused: false,
+      videoId: ''
+    }
+  });
+  const [compareTimes, setCompareTimes] = useState<Record<CompareUser, number>>({
+    User1: 0,
+    User2: 0
+  });
+  const [compareNextIndex, setCompareNextIndex] = useState<Record<CompareUser, number>>({
+    User1: 0,
+    User2: 0
   });
 
   const [decisionBuffer, setDecisionBuffer] = useState<Record<number, SegmentDecision>>({});
-  const [logs, setLogs] = useState<{msg: string, type: 'ws' | 'info'}[]>([]);
+  const [decisionSchedule, setDecisionSchedule] = useState<CameraDecision[]>([]);
+  const [playbackTimeSec, setPlaybackTimeSec] = useState(0);
+  const [nextDecisionIndex, setNextDecisionIndex] = useState(0);
+  const [logs, setLogs] = useState<{msg: string, type: 'ws' | 'info' | 'error' | 'fallback'}[]>([]);
 
-  const addLog = (msg: string, type: 'ws' | 'info' = 'info') => {
+  const addLog = (msg: string, type: 'ws' | 'info' | 'error' | 'fallback' = 'info') => {
     setLogs(prev => [{ msg, type }, ...prev].slice(0, 20));
   };
 
-  // WS Simulation
+  const handleEventSelect = (event: StreamEvent, library: MediaLibrary) => {
+    setMediaLibrary(library);
+    setSelectedEvent(event);
+    setPlayback(prev => ({ 
+      ...prev, 
+      videoId: event.id, 
+      currentCam: event.availableCams.includes(INITIAL_CAM) ? INITIAL_CAM : event.availableCams[0] 
+    }));
+    addLog(`SYSTEM: Dynamic Discovery Complete for ${event.id}`, 'info');
+  };
+
   useEffect(() => {
-    if (!currentUser) return;
+    if (!selectedEvent || !isCompareMode) return;
+    const defaultCam = selectedEvent.availableCams.includes(INITIAL_CAM)
+      ? INITIAL_CAM
+      : (selectedEvent.availableCams[0] ?? '');
 
-    const simulateWS = setInterval(() => {
-      // Simulate decisions for current and future segments
-      const targetSeg = playback.currentSegment + Math.floor(Math.random() * 2);
-      
-      // Randomly pick a user ID (50% chance it's for current user)
-      const msgUserId = Math.random() > 0.5 ? currentUser.id : 'OTHER_USER_' + Math.floor(Math.random() * 10);
-      const camChoice = CAM_LIST[Math.floor(Math.random() * CAM_LIST.length)].id;
-      
-      const msg: SegmentDecision = {
-        user_id: msgUserId,
-        seg: targetSeg,
-        cam: camChoice,
-        confidence: Number(Math.random().toFixed(4))
-      };
-
-      // Filtering Logic
-      if (msg.user_id !== currentUser.id) {
-        addLog(`WS: Ignored msg for ${msg.user_id}`, 'ws');
-        return;
+    setComparePlayback(prev => ({
+      User1: {
+        ...prev.User1,
+        videoId: selectedEvent.id,
+        currentSegment: 1,
+        currentCam: defaultCam
+      },
+      User2: {
+        ...prev.User2,
+        videoId: selectedEvent.id,
+        currentSegment: 1,
+        currentCam: defaultCam
       }
+    }));
+    setCompareTimes({ User1: 0, User2: 0 });
+    setCompareNextIndex({ User1: 0, User2: 0 });
+  }, [selectedEvent?.id, isCompareMode]);
 
-      addLog(`WS: Received cam decision for Seg ${msg.seg} -> ${msg.cam}`, 'ws');
-      setDecisionBuffer(prev => ({ ...prev, [msg.seg]: msg }));
-    }, 1500);
+  // Load schedule JSON when an event is selected.
+  useEffect(() => {
+    if (!selectedEvent) return;
+    let isActive = true;
 
-    return () => clearInterval(simulateWS);
-  }, [currentUser, playback.currentSegment]);
+    fetch('/decisionSchedule.json')
+      .then(response => response.json())
+      .then(data => {
+        if (!isActive) return;
+        if (Array.isArray(data)) {
+          setDecisionSchedule(data);
+        } else {
+          console.warn('decisionSchedule.json is not an array');
+          setDecisionSchedule([]);
+        }
+      })
+      .catch(error => {
+        console.error('Failed to load decision schedule', error);
+        if (isActive) setDecisionSchedule([]);
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [selectedEvent?.id]);
+
+  const userSchedule = useMemo<NormalizedDecision[]>(() => {
+    if (!currentUser || !selectedEvent) return [];
+
+    return decisionSchedule
+      .filter(entry => entry.VideoID === selectedEvent.id && entry.User === currentUser.id)
+      .map(entry => {
+        const timeSec = parseTimestampToSeconds(entry.Timestamp);
+        return {
+          timeSec,
+          cam: normalizeCameraName(entry.Camera),
+          label: entry.Timestamp
+        };
+      })
+      .filter(entry => Number.isFinite(entry.timeSec))
+      .sort((a, b) => a.timeSec - b.timeSec);
+  }, [decisionSchedule, currentUser, selectedEvent]);
+
+  const compareSchedules = useMemo<Record<CompareUser, NormalizedDecision[]>>(() => {
+    if (!selectedEvent) {
+      return { User1: [], User2: [] };
+    }
+
+    const buildSchedule = (userId: CompareUser) => (
+      decisionSchedule
+        .filter(entry => entry.VideoID === selectedEvent.id && entry.User === userId)
+        .map(entry => {
+          const timeSec = parseTimestampToSeconds(entry.Timestamp);
+          return {
+            timeSec,
+            cam: normalizeCameraName(entry.Camera),
+            label: entry.Timestamp
+          };
+        })
+        .filter(entry => Number.isFinite(entry.timeSec))
+        .sort((a, b) => a.timeSec - b.timeSec)
+    );
+
+    return {
+      User1: buildSchedule('User1'),
+      User2: buildSchedule('User2')
+    };
+  }, [decisionSchedule, selectedEvent]);
+
+  useEffect(() => {
+    setNextDecisionIndex(0);
+  }, [currentUser?.id, selectedEvent?.id, userSchedule.length]);
+
+  useEffect(() => {
+    if (!selectedEvent || userSchedule.length === 0) return;
+    const nextDecision = userSchedule[nextDecisionIndex];
+    if (!nextDecision) return;
+
+    if (playbackTimeSec >= nextDecision.timeSec) {
+      if (selectedEvent.availableCams.includes(nextDecision.cam)) {
+        setPlayback(prev => ({ ...prev, currentCam: nextDecision.cam }));
+        addLog(`SCHEDULE: ${nextDecision.label} -> ${nextDecision.cam}`, 'info');
+      } else {
+        addLog(`SCHEDULE_SKIP: ${nextDecision.cam} not available`, 'error');
+      }
+      setNextDecisionIndex(prev => prev + 1);
+    }
+  }, [playbackTimeSec, userSchedule, nextDecisionIndex, selectedEvent]);
+
+  useEffect(() => {
+    if (!isCompareMode || !selectedEvent) return;
+    const schedule = compareSchedules.User1;
+    const nextDecision = schedule[compareNextIndex.User1];
+    if (!nextDecision) return;
+
+    if (compareTimes.User1 >= nextDecision.timeSec) {
+      if (selectedEvent.availableCams.includes(nextDecision.cam)) {
+        setComparePlayback(prev => ({
+          ...prev,
+          User1: {
+            ...prev.User1,
+            currentCam: nextDecision.cam
+          }
+        }));
+        addLog(`SCHEDULE[User1]: ${nextDecision.label} -> ${nextDecision.cam}`, 'info');
+      } else {
+        addLog(`SCHEDULE_SKIP[User1]: ${nextDecision.cam} not available`, 'error');
+      }
+      setCompareNextIndex(prev => ({ ...prev, User1: prev.User1 + 1 }));
+    }
+  }, [
+    isCompareMode,
+    selectedEvent,
+    compareSchedules.User1,
+    compareNextIndex.User1,
+    compareTimes.User1
+  ]);
+
+  useEffect(() => {
+    if (!isCompareMode || !selectedEvent) return;
+    const schedule = compareSchedules.User2;
+    const nextDecision = schedule[compareNextIndex.User2];
+    if (!nextDecision) return;
+
+    if (compareTimes.User2 >= nextDecision.timeSec) {
+      if (selectedEvent.availableCams.includes(nextDecision.cam)) {
+        setComparePlayback(prev => ({
+          ...prev,
+          User2: {
+            ...prev.User2,
+            currentCam: nextDecision.cam
+          }
+        }));
+        addLog(`SCHEDULE[User2]: ${nextDecision.label} -> ${nextDecision.cam}`, 'info');
+      } else {
+        addLog(`SCHEDULE_SKIP[User2]: ${nextDecision.cam} not available`, 'error');
+      }
+      setCompareNextIndex(prev => ({ ...prev, User2: prev.User2 + 1 }));
+    }
+  }, [
+    isCompareMode,
+    selectedEvent,
+    compareSchedules.User2,
+    compareNextIndex.User2,
+    compareTimes.User2
+  ]);
 
   const handleSegmentEnd = useCallback(() => {
     setPlayback(prev => {
       const nextSeg = prev.currentSegment + 1;
+      const session = mediaLibrary?.[prev.videoId];
+      const hasNextSegment = session
+        ? Object.values(session.cams).some(cam => cam.segments[nextSeg])
+        : false;
+
+      if (!hasNextSegment) {
+        addLog(`END: No segment ${nextSeg} for ${prev.videoId}`, 'info');
+        return prev;
+      }
       const decision = decisionBuffer[nextSeg];
       
+      if (!decision) {
+        addLog(`FALLBACK: Seg ${nextSeg} default to ${prev.currentCam}`, 'fallback');
+        return { ...prev, currentSegment: nextSeg };
+      }
+
+      addLog(`SWITCH: Seg ${nextSeg} -> ${decision.cam}`, 'info');
       return {
         ...prev,
         currentSegment: nextSeg,
-        currentCam: decision ? decision.cam : prev.currentCam, // Fallback to current if no decision
+        currentCam: decision.cam
       };
     });
-  }, [decisionBuffer]);
+  }, [decisionBuffer, mediaLibrary]);
 
-  if (!currentUser) {
-    return <Login onLogin={setCurrentUser} />;
+  if (!currentUser) return <Login onLogin={setCurrentUser} />;
+  if (!selectedEvent || !mediaLibrary) return <EventSelection userName={currentUser.name} onSelect={handleEventSelect} />;
+  if (isCompareMode) {
+    const defaultCam = selectedEvent.availableCams.includes(INITIAL_CAM)
+      ? INITIAL_CAM
+      : (selectedEvent.availableCams[0] ?? '');
+    const getCompareCam = (userId: CompareUser) => comparePlayback[userId].currentCam || defaultCam;
+
+    return (
+      <div className="flex flex-col h-screen bg-[#020202] text-white font-sans overflow-hidden">
+        <header className="h-14 border-b border-white/5 flex items-center justify-between px-6 bg-[#080808] z-50">
+          <div className="flex items-center gap-4">
+            <div className="bg-red-600 text-white px-2 py-0.5 rounded font-black text-sm italic tracking-tighter">OWN GOAL</div>
+            <div className="flex flex-col">
+               <span className="text-[10px] font-black uppercase text-blue-500 leading-none tracking-widest">{selectedEvent.id}</span>
+               <span className="text-[8px] uppercase tracking-[0.2em] text-gray-600 font-bold">Dual Viewer Compare</span>
+            </div>
+          </div>
+          <button 
+            onClick={() => { 
+              setSelectedEvent(null);
+              setPlayback(p => ({ ...p, currentSegment: 1 }));
+              setDecisionBuffer({});
+              setCompareTimes({ User1: 0, User2: 0 });
+              setCompareNextIndex({ User1: 0, User2: 0 });
+            }}
+            className="text-[9px] font-black text-gray-500 hover:text-white border border-white/10 px-3 py-1 rounded transition-all"
+          >
+            DISCONNECT UPLINK
+          </button>
+        </header>
+
+        <main className="flex-1 p-6 grid grid-cols-12 gap-6 overflow-hidden bg-[radial-gradient(circle_at_center,_#0a0a0a_0%,_#020202_100%)]">
+          <div className="col-span-12 grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {COMPARE_USERS.map(userId => {
+              const cam = getCompareCam(userId);
+              return (
+                <div key={userId} className="bg-[#080808] border border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-2xl">
+                  <div className="px-4 py-3 border-b border-white/5 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className={`px-2 py-1 rounded text-[9px] font-black uppercase tracking-widest ${userId === 'User1' ? 'bg-blue-500/10 text-blue-400' : 'bg-green-500/10 text-green-400'}`}>
+                        {userId}
+                      </div>
+                      <div className="text-[9px] text-gray-500 uppercase tracking-widest">CAM</div>
+                      <div className="text-[10px] font-black text-white uppercase">{cam}</div>
+                    </div>
+                    <div className="text-[10px] font-mono text-gray-500">{formatTime(compareTimes[userId])}</div>
+                  </div>
+                  <div className="flex-1 relative min-h-[260px]">
+                    <SegmentPlayer 
+                      videoId={selectedEvent.id}
+                      currentSegment={comparePlayback[userId].currentSegment}
+                      currentCam={cam}
+                      library={mediaLibrary}
+                      onSegmentEnd={() => {}}
+                      onBufferStatus={(isBuffering) => setComparePlayback(prev => ({
+                        ...prev,
+                        [userId]: { ...prev[userId], isBuffering }
+                      }))}
+                      onTimeUpdate={(time) => setCompareTimes(prev => ({ ...prev, [userId]: time }))}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </main>
+      </div>
+    );
   }
 
   return (
-    <div className="flex flex-col h-screen bg-[#050505] text-white font-sans overflow-hidden">
-      {/* Top Header */}
-      <header className="h-16 border-b border-white/5 flex items-center justify-between px-6 bg-[#0a0a0a]">
+    <div className="flex flex-col h-screen bg-[#020202] text-white font-sans overflow-hidden">
+      <header className="h-14 border-b border-white/5 flex items-center justify-between px-6 bg-[#080808] z-50">
         <div className="flex items-center gap-4">
-          <div className="bg-red-600 text-white px-2 py-0.5 rounded font-black text-sm italic tracking-tighter">
-            OWN GOAL
+          <div className="bg-red-600 text-white px-2 py-0.5 rounded font-black text-sm italic tracking-tighter">OWN GOAL</div>
+          <div className="flex flex-col">
+             <span className="text-[10px] font-black uppercase text-blue-500 leading-none tracking-widest">{selectedEvent.id}</span>
+             <span className="text-[8px] uppercase tracking-[0.2em] text-gray-600 font-bold">Local File Access Mode</span>
           </div>
-          <div className="h-4 w-[1px] bg-white/10" />
-          <span className="text-[10px] uppercase tracking-[0.3em] text-gray-500 font-bold">Live Stream Director</span>
         </div>
-
-        <div className="flex items-center gap-6">
-          <div className="flex flex-col items-end">
-            <span className="text-[9px] text-gray-600 uppercase tracking-widest">Active Operator</span>
-            <span className="text-[11px] font-mono text-blue-400">{currentUser.id}</span>
-          </div>
-          <button 
-            onClick={() => setCurrentUser(null)}
-            className="text-[10px] font-bold text-gray-500 hover:text-white transition-colors"
-          >
-            LOGOUT
-          </button>
-        </div>
+        <button 
+          onClick={() => { setSelectedEvent(null); setPlayback(p => ({ ...p, currentSegment: 1 })); setDecisionBuffer({}); }}
+          className="text-[9px] font-black text-gray-500 hover:text-white border border-white/10 px-3 py-1 rounded transition-all"
+        >
+          DISCONNECT UPLINK
+        </button>
       </header>
 
-      {/* Main Grid */}
-      <main className="flex-1 p-6 grid grid-cols-12 gap-6 overflow-hidden">
-        {/* Playback Container */}
-        <div className="col-span-12 lg:col-span-8 flex flex-col gap-4">
-          <div className="flex-1 relative">
+      <main className="flex-1 p-6 grid grid-cols-12 gap-6 overflow-hidden bg-[radial-gradient(circle_at_center,_#0a0a0a_0%,_#020202_100%)]">
+        <div className="col-span-12 lg:col-span-9 flex flex-col gap-4">
+          <div className="flex-1 relative shadow-2xl rounded-2xl overflow-hidden border border-white/5">
             <SegmentPlayer 
+              videoId={playback.videoId}
               currentSegment={playback.currentSegment}
               currentCam={playback.currentCam}
+              library={mediaLibrary}
               onSegmentEnd={handleSegmentEnd}
               onBufferStatus={(isBuffering) => setPlayback(p => ({ ...p, isBuffering }))}
+              onTimeUpdate={setPlaybackTimeSec}
             />
-            
-            {playback.isBuffering && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-                <div className="flex flex-col items-center gap-3">
-                  <div className="w-10 h-10 border-4 border-white/10 border-t-red-500 rounded-full animate-spin" />
-                  <span className="text-[10px] tracking-widest font-bold">SYNCING FEED</span>
-                </div>
-              </div>
-            )}
           </div>
 
-          {/* Status Indicators */}
-          <div className="bg-[#0a0a0a] border border-white/5 rounded-xl p-4 flex justify-between items-center">
-             <div className="flex gap-8">
-               <div className="flex flex-col">
-                 <span className="text-[9px] text-gray-600 uppercase tracking-widest font-bold mb-1">Current Segment</span>
-                 <span className="text-xl font-mono">{playback.currentSegment.toString().padStart(5, '0')}</span>
+          <div className="bg-[#0a0a0a] border border-white/5 rounded-xl p-6 flex justify-between items-center">
+             <div className="flex gap-12">
+               <div>
+                 <div className="text-[9px] text-gray-600 uppercase font-black mb-1">Index</div>
+                 <div className="text-2xl font-mono font-bold">{playback.currentSegment.toString().padStart(5, '0')}</div>
                </div>
-               <div className="flex flex-col">
-                 <span className="text-[9px] text-gray-600 uppercase tracking-widest font-bold mb-1">Active Angle</span>
-                 <span className="text-xl font-bold text-red-500">{playback.currentCam}</span>
-               </div>
-               <div className="flex flex-col">
-                 <span className="text-[9px] text-gray-600 uppercase tracking-widest font-bold mb-1">Decision Confidence</span>
-                 <span className="text-xl font-mono text-green-500">{(decisionBuffer[playback.currentSegment]?.confidence * 100 || 0).toFixed(1)}%</span>
+               <div>
+                 <div className="text-[9px] text-gray-600 uppercase font-black mb-1">Source</div>
+                 <div className="text-2xl font-black text-red-500 italic uppercase">{playback.currentCam}</div>
                </div>
              </div>
-             
              <div className="flex gap-2">
-                {CAM_LIST.map(cam => (
-                  <div 
-                    key={cam.id}
-                    className={`px-3 py-1 rounded text-[9px] font-bold border ${
-                      playback.currentCam === cam.id 
-                      ? 'bg-red-500/10 border-red-500 text-red-500' 
-                      : 'bg-white/5 border-white/5 text-gray-600'
-                    }`}
+                {selectedEvent.availableCams.map(cam => (
+                  <button
+                    key={cam}
+                    type="button"
+                    onClick={() => setPlayback(prev => ({ ...prev, currentCam: cam }))}
+                    className={`px-4 py-2 rounded text-[10px] font-black border transition-all ${playback.currentCam === cam ? 'bg-blue-500/10 border-blue-500 text-blue-500' : 'bg-white/5 border-white/5 text-gray-700 hover:border-white/20 hover:text-gray-300'}`}
                   >
-                    {cam.label}
-                  </div>
+                    {cam}
+                  </button>
                 ))}
              </div>
           </div>
         </div>
 
-        {/* Console / Sidebars */}
-        <div className="col-span-12 lg:col-span-4 flex flex-col gap-6 overflow-hidden">
-          <div className="bg-[#0a0a0a] border border-white/5 rounded-xl flex-1 flex flex-col overflow-hidden">
-            <div className="p-4 border-b border-white/5 flex items-center justify-between">
-              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">WS Message Terminal</span>
-              <div className="flex items-center gap-1">
-                <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-                <span className="text-[9px] text-green-500 font-bold">CONNECTED</span>
-              </div>
-            </div>
-            
-            <div className="flex-1 overflow-y-auto p-4 font-mono text-[10px] space-y-2">
+        <div className="col-span-12 lg:col-span-3 flex flex-col gap-6 overflow-hidden">
+          <div className="bg-[#080808] border border-white/5 rounded-xl flex-1 flex flex-col overflow-hidden">
+            <div className="p-4 border-b border-white/5 text-[10px] font-black text-gray-600 uppercase tracking-widest">Decision Stream</div>
+            <div className="flex-1 overflow-y-auto p-4 font-mono text-[10px] space-y-2 custom-scrollbar">
               {logs.map((log, i) => (
-                <div key={i} className={`flex gap-3 ${log.type === 'ws' ? 'text-gray-400' : 'text-blue-400'}`}>
-                  {/* Fixed: Removed fractionalSecondDigits to comply with available DateTimeFormatOptions in the environment */}
-                  <span className="text-gray-700">[{new Date().toLocaleTimeString([], { hour12: false })}]</span>
-                  <span className="flex-1 break-all">{log.msg}</span>
+                <div key={i} className={`flex gap-3 leading-relaxed ${log.type === 'error' ? 'text-red-500' : log.type === 'fallback' ? 'text-yellow-600' : 'text-blue-400'}`}>
+                  <span className="text-gray-800 shrink-0">{i}</span>
+                  <span className="flex-1">{log.msg}</span>
                 </div>
               ))}
-              {logs.length === 0 && <div className="text-gray-800 italic">No incoming data packets...</div>}
-            </div>
-          </div>
-
-          {/* Pending Decisions Card */}
-          <div className="h-48 bg-[#0a0a0a] border border-white/5 rounded-xl p-4 overflow-hidden flex flex-col">
-            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-4 border-b border-white/5 pb-2 block">Decision Stack</span>
-            <div className="flex-1 overflow-y-auto pr-2">
-              <div className="grid grid-cols-2 gap-2">
-                {Object.values(decisionBuffer).sort((a,b) => b.seg - a.seg).slice(0, 10).map(d => (
-                  <div key={d.seg} className="bg-white/5 rounded p-2 border border-white/5">
-                    <div className="text-[8px] text-gray-600 mb-1">SEG {d.seg}</div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-[10px] font-bold">{d.cam}</span>
-                      <span className="text-[9px] text-green-500">{(d.confidence*100).toFixed(0)}%</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
             </div>
           </div>
         </div>
       </main>
-
-      {/* Footer Status Bar */}
-      <footer className="h-10 border-t border-white/5 bg-[#050505] flex items-center justify-between px-6 text-[9px] font-bold text-gray-600 tracking-widest uppercase">
-        <div className="flex gap-6">
-          <div className="flex items-center gap-2">
-            <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-            Segment Hash: Valid
-          </div>
-          <div className="flex items-center gap-2">
-             <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
-             Buffer: {Math.max(0, Object.keys(decisionBuffer).length)} Packets
-          </div>
-        </div>
-        <div>
-          Auth User: {currentUser.id} • Path Resolution: Native
-        </div>
-      </footer>
     </div>
   );
 };

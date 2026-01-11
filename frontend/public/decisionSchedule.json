@@ -1,0 +1,74 @@
+[
+  {
+    "VideoID": "vid2",
+    "User": "User1",
+    "Timestamp": "00:05",
+    "Camera": "2CAM"
+  },
+  {
+    "VideoID": "vid2",
+    "User": "User1",
+    "Timestamp": "00:13",
+    "Camera": "5CAM"
+  },
+  {
+    "VideoID": "vid2",
+    "User": "User1",
+    "Timestamp": "00:23",
+    "Camera": "BREP"
+  },
+  {
+    "VideoID": "vid2",
+    "User": "User1",
+    "Timestamp": "01:32",
+    "Camera": "2CAM"
+  },
+  {
+    "VideoID": "vid2",
+    "User": "User1",
+    "Timestamp": "02:09",
+    "Camera": "BREP"
+  },
+  {
+    "VideoID": "vid2",
+    "User": "User1",
+    "Timestamp": "02:56",
+    "Camera": "2CAM"
+  },
+  {
+    "VideoID": "vid2",
+    "User": "User2",
+    "Timestamp": "00:05",
+    "Camera": "5CAM"
+  },
+  {
+    "VideoID": "vid2",
+    "User": "User2",
+    "Timestamp": "00:13",
+    "Camera": "2CAM"
+  },
+  {
+    "VideoID": "vid2",
+    "User": "User2",
+    "Timestamp": "00:23",
+    "Camera": "11CAM"
+  },
+  {
+    "VideoID": "vid2",
+    "User": "User2",
+    "Timestamp": "01:32",
+    "Camera": "5CAM"
+  },
+  {
+    "VideoID": "vid2",
+    "User": "User2",
+    "Timestamp": "02:09",
+    "Camera": "11CAM"
+  },
+  {
+    "VideoID": "vid2",
+    "User": "User2",
+    "Timestamp": "02:56",
+    "Camera": "5CAM"
+  }
+]
