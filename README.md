@@ -1,4 +1,5 @@
 # Owngoal 🏀
+[![SB Hacks XII 2026 Winner](https://img.shields.io/badge/SB%20Hacks%20XII%202026-Winner-brightgreen)](https://devpost.com/software/owngoal)
 
 **The Personalized Broadcast Director Agent**
 
